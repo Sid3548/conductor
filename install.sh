@@ -4,65 +4,180 @@ set -e
 CLAUDE_DIR="$HOME/.claude"
 SETTINGS="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AGENTS_JSON="$SCRIPT_DIR/agents.json"
+DETECTED_JSON="$(mktemp -t conductor-detected.XXXXXX.json)"
+trap 'rm -f "$DETECTED_JSON"' EXIT
 
 echo "🎼 conductor installer"
 echo ""
 
-# --- Detect CLIs ---
-echo "Detecting CLIs..."
-CODEX_OK=false
-GEMINI_OK=false
-command -v codex &>/dev/null && CODEX_OK=true && echo "  ✓ codex found"
-command -v gemini &>/dev/null && GEMINI_OK=true && echo "  ✓ gemini found"
-$CODEX_OK || echo "  ✗ codex not found — install from https://github.com/openai/codex"
-$GEMINI_OK || echo "  ✗ gemini not found — install Gemini CLI"
+# Parse agents.json — need node/bun
+if ! command -v node &>/dev/null && ! command -v bun &>/dev/null; then
+  echo "Error: node or bun required to parse agents.json"
+  exit 1
+fi
+RUNNER="$(command -v bun || command -v node)"
+
+# Detect which agents are available
+echo "Detecting agents from agents.json..."
+DETECTED_JSON="$DETECTED_JSON" AGENTS_JSON="$AGENTS_JSON" "$RUNNER" -e '
+const fs = require("fs");
+const { execSync } = require("child_process");
+
+function parseJsonc(path) {
+  const raw = fs.readFileSync(path, "utf8");
+  const stripped = raw
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+  return JSON.parse(stripped);
+}
+
+const config = parseJsonc(process.env.AGENTS_JSON);
+if (!config.agents || !Array.isArray(config.agents)) {
+  console.error("  ✗ agents.json missing `agents` array");
+  process.exit(1);
+}
+
+const found = [];
+for (const agent of config.agents) {
+  try {
+    execSync("command -v " + agent.detect_cmd, { stdio: "ignore", shell: "/bin/bash" });
+    found.push(agent);
+    console.log("  ✓ " + agent.name + " found");
+  } catch {
+    console.log("  ✗ " + agent.name + " not found (install " + agent.detect_cmd + ")");
+  }
+}
+
+fs.writeFileSync(process.env.DETECTED_JSON, JSON.stringify(found, null, 2));
+'
 echo ""
 
-# --- Register MCPs ---
-if $CODEX_OK; then
-  echo "Registering codex MCP..."
-  claude mcp add --scope user codex-delegate -- codex mcp-server 2>/dev/null && echo "  ✓ codex-delegate registered" || echo "  ✗ codex MCP failed (already registered?)"
-fi
+# Register MCPs for detected agents
+echo "Registering MCPs..."
+DETECTED_JSON="$DETECTED_JSON" "$RUNNER" -e '
+const fs = require("fs");
+const { spawnSync } = require("child_process");
+const agents = JSON.parse(fs.readFileSync(process.env.DETECTED_JSON, "utf8"));
 
-if $GEMINI_OK; then
-  SHIM="$HOME/.claude-router/gemini-mcp/server.mjs"
-  if [ -f "$SHIM" ]; then
-    echo "Registering gemini MCP..."
-    claude mcp add --scope user gemini-delegate -- node "$SHIM" 2>/dev/null && echo "  ✓ gemini-delegate registered" || echo "  ✗ gemini MCP failed (already registered?)"
-  else
-    echo "  ✗ gemini shim not found at $SHIM — skipping gemini MCP"
-  fi
-fi
+for (const agent of agents) {
+  const cmd = (agent.mcp_cmd || []).map((part) =>
+    typeof part === "string" && part.startsWith("~")
+      ? part.replace(/^~/, process.env.HOME || "~")
+      : part
+  );
+
+  const args = ["mcp", "add", "--scope", "user", agent.mcp_name, "--", ...cmd];
+  const result = spawnSync("claude", args, { stdio: "ignore" });
+  if (result.status === 0) {
+    console.log("  ✓ " + agent.mcp_name + " registered");
+  } else {
+    console.log("  ✗ " + agent.mcp_name + " failed (already registered?)");
+  }
+}
+'
 echo ""
 
-# --- Patch settings.json ---
+# Patch settings.json — add permissions.allow for detected agents
 echo "Patching settings.json..."
 mkdir -p "$CLAUDE_DIR"
-if [ ! -f "$SETTINGS" ]; then
-  echo '{}' > "$SETTINGS"
-fi
-# Merge permissions.allow using node
-node -e "
-const fs = require('fs');
-const s = JSON.parse(fs.readFileSync('$SETTINGS', 'utf8'));
-s.permissions = s.permissions || {};
-s.permissions.allow = s.permissions.allow || [];
-const toAdd = ['mcp__codex-delegate__codex','mcp__codex-delegate__codex-reply','mcp__gemini-delegate__gemini'];
-toAdd.forEach(t => { if (!s.permissions.allow.includes(t)) s.permissions.allow.push(t); });
-fs.writeFileSync('$SETTINGS', JSON.stringify(s, null, 2));
-console.log('  ✓ permissions patched');
-"
+[ -f "$SETTINGS" ] || echo "{}" > "$SETTINGS"
+DETECTED_JSON="$DETECTED_JSON" SETTINGS="$SETTINGS" "$RUNNER" -e '
+const fs = require("fs");
+const agents = JSON.parse(fs.readFileSync(process.env.DETECTED_JSON, "utf8"));
+const settings = JSON.parse(fs.readFileSync(process.env.SETTINGS, "utf8"));
+
+settings.permissions = settings.permissions || {};
+settings.permissions.allow = settings.permissions.allow || [];
+for (const agent of agents) {
+  const tools = [
+    "mcp__" + agent.mcp_name + "__" + agent.name,
+    "mcp__" + agent.mcp_name + "__" + agent.name + "-reply",
+  ];
+  for (const tool of tools) {
+    if (!settings.permissions.allow.includes(tool)) {
+      settings.permissions.allow.push(tool);
+    }
+  }
+}
+
+fs.writeFileSync(process.env.SETTINGS, JSON.stringify(settings, null, 2));
+console.log("  ✓ permissions patched");
+'
 echo ""
 
-# --- Write CLAUDE.md ---
-echo "Writing CLAUDE.md..."
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$CLAUDE_MD" ]; then
+# Generate CLAUDE.md from template + detected agents
+echo "Generating CLAUDE.md..."
+[ -f "$CLAUDE_MD" ] && {
   cp "$CLAUDE_MD" "$CLAUDE_MD.conductor-backup"
-  echo "  ✓ backed up existing CLAUDE.md to CLAUDE.md.conductor-backup"
-fi
-cp "$SCRIPT_DIR/CLAUDE.md" "$CLAUDE_MD"
-echo "  ✓ CLAUDE.md written"
-echo ""
+  echo "  ✓ backed up existing CLAUDE.md"
+}
 
-echo "✅ conductor installed. Restart Claude Code to apply."
+DETECTED_JSON="$DETECTED_JSON" TEMPLATE="$SCRIPT_DIR/CLAUDE.md" CLAUDE_MD="$CLAUDE_MD" "$RUNNER" -e '
+const fs = require("fs");
+const agents = JSON.parse(fs.readFileSync(process.env.DETECTED_JSON, "utf8"));
+const template = fs.readFileSync(process.env.TEMPLATE, "utf8");
+
+const title = (value) => value.charAt(0).toUpperCase() + value.slice(1);
+const roleMap = {
+  code: "Code, repo, files, debug, tests, refactor, build",
+  search: "Search, web research, UI, visual design",
+  design: "UI/UX, prototypes, visual",
+  general: "General tasks",
+};
+
+const teamLines = agents
+  .map(
+    (agent) =>
+      "- **" +
+      title(agent.name) +
+      "** — " +
+      agent.description +
+      " Called via `" +
+      agent.mcp_name +
+      "` MCP."
+  )
+  .join("\n");
+
+const classifierLines = agents
+  .map((agent) => "   - " + (roleMap[agent.role] || agent.role) + " → **" + title(agent.name) + "**")
+  .join("\n");
+
+const delegationLines = agents
+  .map(
+    (agent) =>
+      "### " +
+      title(agent.name) +
+      " (`mcp__" +
+      agent.mcp_name +
+      "__" +
+      agent.name +
+      "`)\n" +
+      "- `prompt`: caveman-compressed request. Include desired output.\n" +
+      "- `cwd`: project dir. Pass every time.\n" +
+      "- `sandbox`: read-only | workspace-write | danger-full-access\n" +
+      "- `approval-policy`: on-request"
+  )
+  .join("\n\n");
+
+const permLines = agents
+  .flatMap((agent) => [
+    "\"mcp__" + agent.mcp_name + "__" + agent.name + "\"",
+    "\"mcp__" + agent.mcp_name + "__" + agent.name + "-reply\"",
+  ])
+  .join(", ");
+
+const rendered = template
+  .replace("{{TEAM}}", teamLines)
+  .replace("{{CLASSIFIER}}", classifierLines)
+  .replace("{{DELEGATION}}", delegationLines)
+  .replace("{{PERMISSIONS}}", permLines);
+
+fs.writeFileSync(process.env.CLAUDE_MD, rendered);
+console.log("  ✓ CLAUDE.md generated with " + agents.length + " agent(s)");
+'
+
+AGENT_SUMMARY="$("$RUNNER" -e 'const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(d.length+" agent(s): "+d.map(a=>a.name).join(", "));' "$DETECTED_JSON")"
+echo ""
+echo "✅ conductor installed with $AGENT_SUMMARY. Restart Claude Code to apply."

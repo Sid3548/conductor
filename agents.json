@@ -1,0 +1,30 @@
+{
+  // User-editable agent registry.
+  // Add entries for any CLI you want to route through conductor.
+  // Fields:
+  // - name: tool identifier used by MCP methods
+  // - mcp_name: Claude MCP server registration name
+  // - mcp_cmd: command array used for `claude mcp add ... -- <cmd>`
+  // - role: code | search | design | general
+  // - description: routing/team description text
+  // - detect_cmd: CLI binary checked via `command -v`
+  "agents": [
+    {
+      "name": "codex",
+      "mcp_name": "codex-delegate",
+      "mcp_cmd": ["codex", "mcp-server"],
+      "role": "code",
+      "description": "Backend / engineering lead. Code, repo, files, debugging, tests, refactor, build.",
+      "detect_cmd": "codex"
+    },
+    {
+      "name": "gemini",
+      "mcp_name": "gemini-delegate",
+      "mcp_cmd_note": "requires shim at ~/.claude-router/gemini-mcp/server.mjs",
+      "mcp_cmd": ["node", "~/.claude-router/gemini-mcp/server.mjs"],
+      "role": "search",
+      "description": "Search / UI / design lead. Web research, interfaces, visual design.",
+      "detect_cmd": "gemini"
+    }
+  ]
+}

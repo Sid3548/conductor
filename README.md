@@ -32,3 +32,20 @@ bash install.sh
 | `~/.claude/CLAUDE.md` | Orchestrator rules for Claude |
 | `~/.claude/settings.json` | Auto-approves agent MCP calls (no popup) |
 | MCP registrations | Wires codex-delegate and gemini-delegate |
+
+## Adding a new agent
+
+Edit `agents.json` before running install.sh. Add an entry:
+
+```json
+{
+  "name": "opencode",
+  "mcp_name": "opencode-delegate",
+  "mcp_cmd": ["opencode", "mcp"],
+  "role": "code",
+  "description": "OpenCode engineering agent.",
+  "detect_cmd": "opencode"
+}
+```
+
+Then re-run `bash install.sh` to register and update routing.
