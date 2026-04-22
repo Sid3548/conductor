@@ -4,8 +4,10 @@ set -e
 CLAUDE_DIR="$HOME/.claude"
 SETTINGS="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
+HOOKS_DIR="$CLAUDE_DIR/conductor-hooks"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTS_JSON="$SCRIPT_DIR/agents.json"
+SOURCE_HOOKS_DIR="$SCRIPT_DIR/hooks"
 DETECTED_JSON="$(mktemp -t conductor-detected.XXXXXX.json)"
 trap 'rm -f "$DETECTED_JSON"' EXIT
 
@@ -79,6 +81,15 @@ for (const agent of agents) {
 '
 echo ""
 
+# Install conductor hooks
+echo "Installing conductor hooks..."
+mkdir -p "$HOOKS_DIR"
+cp -f "$SOURCE_HOOKS_DIR/token-tracker.sh" "$HOOKS_DIR/token-tracker.sh"
+cp -f "$SOURCE_HOOKS_DIR/token-summary.sh" "$HOOKS_DIR/token-summary.sh"
+chmod +x "$HOOKS_DIR/token-tracker.sh" "$HOOKS_DIR/token-summary.sh"
+echo "  ✓ hooks copied to $HOOKS_DIR"
+echo ""
+
 # Patch settings.json — add permissions.allow for detected agents
 echo "Patching settings.json..."
 mkdir -p "$CLAUDE_DIR"
@@ -102,8 +113,38 @@ for (const agent of agents) {
   }
 }
 
+settings.hooks = settings.hooks || {};
+settings.hooks.PostToolUse = settings.hooks.PostToolUse || [];
+settings.hooks.Stop = settings.hooks.Stop || [];
+
+const trackerCommand = "~/.claude/conductor-hooks/token-tracker.sh";
+const summaryCommand = "~/.claude/conductor-hooks/token-summary.sh";
+
+const hasTracker = settings.hooks.PostToolUse.some((entry) =>
+  Array.isArray(entry.hooks) &&
+  entry.hooks.some((hook) => hook && hook.command === trackerCommand)
+);
+
+if (!hasTracker) {
+  settings.hooks.PostToolUse.push({
+    matcher: "mcp__codex-delegate__|mcp__gemini-delegate__",
+    hooks: [{ type: "command", command: trackerCommand }],
+  });
+}
+
+const hasSummary = settings.hooks.Stop.some((entry) =>
+  Array.isArray(entry.hooks) &&
+  entry.hooks.some((hook) => hook && hook.command === summaryCommand)
+);
+
+if (!hasSummary) {
+  settings.hooks.Stop.push({
+    hooks: [{ type: "command", command: summaryCommand }],
+  });
+}
+
 fs.writeFileSync(process.env.SETTINGS, JSON.stringify(settings, null, 2));
-console.log("  ✓ permissions patched");
+console.log("  ✓ permissions + hooks patched");
 '
 echo ""
 

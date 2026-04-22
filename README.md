@@ -10,6 +10,7 @@ conductor is a Claude Code skill that turns Claude into a CTO-mode orchestrator 
 - Claude routes behind the scenes: code tasks → Codex CLI, search/UI → Gemini CLI
 - All agents reply in compressed caveman format to save tokens
 - Errors surface immediately, loops are blocked, delegation depth capped at 1
+- Per-turn token tally after delegated calls: `📊 tokens — Codex: ~X | Gemini: ~Y | total: ~Z`
 
 ## Install
 
@@ -30,7 +31,8 @@ bash install.sh
 | File | What it does |
 |---|---|
 | `~/.claude/CLAUDE.md` | Orchestrator rules for Claude |
-| `~/.claude/settings.json` | Auto-approves agent MCP calls (no popup) |
+| `~/.claude/settings.json` | Auto-approves agent MCP calls and wires PostToolUse/Stop hooks |
+| `~/.claude/conductor-hooks/` | Token tracker + summary hook scripts |
 | MCP registrations | Wires codex-delegate and gemini-delegate |
 
 ## Adding a new agent
