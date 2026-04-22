@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__codex-delegate__codex",
+      "mcp__codex-delegate__codex-reply",
+      "mcp__gemini-delegate__gemini"
+    ]
+  }
+}
