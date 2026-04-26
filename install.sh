@@ -31,7 +31,7 @@ function parseJsonc(path) {
   const raw = fs.readFileSync(path, "utf8");
   const stripped = raw
     .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+    .replace(/(^|[^:])\/.*/gm, "$1");
   return JSON.parse(stripped);
 }
 
@@ -43,17 +43,45 @@ if (!config.agents || !Array.isArray(config.agents)) {
 
 const found = [];
 for (const agent of config.agents) {
-  try {
-    execSync("command -v " + agent.detect_cmd, { stdio: "ignore", shell: "/bin/bash" });
+  let detected = false;
+  if (agent.detect_cmd) {
+    try {
+      execSync("command -v " + agent.detect_cmd, { stdio: "ignore", shell: "/bin/bash" });
+      detected = true;
+    } catch {}
+  } else if (agent.detect_path) {
+    const resolved = agent.detect_path.replace(/^~/, process.env.HOME || "~");
+    try {
+      execSync("test -f \"" + resolved + "\"", { stdio: "ignore", shell: "/bin/bash" });
+      detected = true;
+    } catch {}
+  }
+
+  if (detected) {
     found.push(agent);
     console.log("  ✓ " + agent.name + " found");
-  } catch {
-    console.log("  ✗ " + agent.name + " not found (install " + agent.detect_cmd + ")");
+  } else {
+    const hint = agent.detect_cmd || agent.detect_path || "?";
+    console.log("  ✗ " + agent.name + " not found (" + hint + ")");
   }
 }
 
 fs.writeFileSync(process.env.DETECTED_JSON, JSON.stringify(found, null, 2));
 '
+echo ""
+
+# Copy MCP shim directories to ~/.claude-router/
+echo "Installing MCP shims..."
+mkdir -p ~/.claude-router
+shim_count=0
+for shim_dir in "$SCRIPT_DIR"/*-mcp; do
+  [ -d "$shim_dir" ] || continue
+  shim_name="$(basename "$shim_dir")"
+  cp -rf "$shim_dir" ~/.claude-router/
+  echo "  ✓ $shim_name → ~/.claude-router/$shim_name"
+  shim_count=$((shim_count + 1))
+done
+[ "$shim_count" -eq 0 ] && echo "  (no shim directories found)"
 echo ""
 
 # Register MCPs for detected agents
@@ -119,17 +147,20 @@ settings.hooks.Stop = settings.hooks.Stop || [];
 
 const trackerCommand = "~/.claude/conductor-hooks/token-tracker.sh";
 const summaryCommand = "~/.claude/conductor-hooks/token-summary.sh";
+const agentMatcher = agents.map(a => "mcp__" + a.mcp_name + "__").join("|");
 
-const hasTracker = settings.hooks.PostToolUse.some((entry) =>
+const trackerIdx = settings.hooks.PostToolUse.findIndex((entry) =>
   Array.isArray(entry.hooks) &&
   entry.hooks.some((hook) => hook && hook.command === trackerCommand)
 );
 
-if (!hasTracker) {
+if (trackerIdx === -1) {
   settings.hooks.PostToolUse.push({
-    matcher: "mcp__codex-delegate__|mcp__gemini-delegate__",
+    matcher: agentMatcher,
     hooks: [{ type: "command", command: trackerCommand }],
   });
+} else {
+  settings.hooks.PostToolUse[trackerIdx].matcher = agentMatcher;
 }
 
 const hasSummary = settings.hooks.Stop.some((entry) =>
@@ -165,7 +196,7 @@ const roleMap = {
   code: "Code, repo, files, debug, tests, refactor, build",
   search: "Search, web research, UI, visual design",
   design: "UI/UX, prototypes, visual",
-  general: "General tasks",
+  general: "Offline / local tasks, sensitive data, no internet",
 };
 
 const teamLines = agents
@@ -194,7 +225,7 @@ const delegationLines = agents
       agent.mcp_name +
       "__" +
       agent.name +
-      "`)\n" +
+      "`}\n" +
       "- `prompt`: caveman-compressed request. Include desired output.\n" +
       "- `cwd`: project dir. Pass every time.\n" +
       "- `sandbox`: read-only | workspace-write | danger-full-access\n" +
