@@ -11,10 +11,10 @@ SOURCE_HOOKS_DIR="$SCRIPT_DIR/hooks"
 DETECTED_JSON="$(mktemp -t conductor-detected.XXXXXX.json)"
 trap 'rm -f "$DETECTED_JSON"' EXIT
 
-echo "🎼 conductor installer"
+echo "conductor installer"
 echo ""
 
-# Parse agents.json — need node/bun
+# Parse agents.json -- need node/bun
 if ! command -v node &>/dev/null && ! command -v bun &>/dev/null; then
   echo "Error: node or bun required to parse agents.json"
   exit 1
@@ -31,13 +31,13 @@ function parseJsonc(path) {
   const raw = fs.readFileSync(path, "utf8");
   const stripped = raw
     .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/.*/gm, "$1");
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
   return JSON.parse(stripped);
 }
 
 const config = parseJsonc(process.env.AGENTS_JSON);
 if (!config.agents || !Array.isArray(config.agents)) {
-  console.error("  ✗ agents.json missing `agents` array");
+  console.error("  agents.json missing `agents` array");
   process.exit(1);
 }
 
@@ -59,10 +59,10 @@ for (const agent of config.agents) {
 
   if (detected) {
     found.push(agent);
-    console.log("  ✓ " + agent.name + " found");
+    console.log("  found: " + agent.name);
   } else {
     const hint = agent.detect_cmd || agent.detect_path || "?";
-    console.log("  ✗ " + agent.name + " not found (" + hint + ")");
+    console.log("  not found: " + agent.name + " (" + hint + ")");
   }
 }
 
@@ -78,7 +78,7 @@ for shim_dir in "$SCRIPT_DIR"/*-mcp; do
   [ -d "$shim_dir" ] || continue
   shim_name="$(basename "$shim_dir")"
   cp -rf "$shim_dir" ~/.claude-router/
-  echo "  ✓ $shim_name → ~/.claude-router/$shim_name"
+  echo "  copied $shim_name to ~/.claude-router/$shim_name"
   shim_count=$((shim_count + 1))
 done
 [ "$shim_count" -eq 0 ] && echo "  (no shim directories found)"
@@ -101,9 +101,9 @@ for (const agent of agents) {
   const args = ["mcp", "add", "--scope", "user", agent.mcp_name, "--", ...cmd];
   const result = spawnSync("claude", args, { stdio: "ignore" });
   if (result.status === 0) {
-    console.log("  ✓ " + agent.mcp_name + " registered");
+    console.log("  registered: " + agent.mcp_name);
   } else {
-    console.log("  ✗ " + agent.mcp_name + " failed (already registered?)");
+    console.log("  failed (already registered?): " + agent.mcp_name);
   }
 }
 '
@@ -115,10 +115,10 @@ mkdir -p "$HOOKS_DIR"
 cp -f "$SOURCE_HOOKS_DIR/token-tracker.sh" "$HOOKS_DIR/token-tracker.sh"
 cp -f "$SOURCE_HOOKS_DIR/token-summary.sh" "$HOOKS_DIR/token-summary.sh"
 chmod +x "$HOOKS_DIR/token-tracker.sh" "$HOOKS_DIR/token-summary.sh"
-echo "  ✓ hooks copied to $HOOKS_DIR"
+echo "  hooks copied to $HOOKS_DIR"
 echo ""
 
-# Patch settings.json — add permissions.allow for detected agents
+# Patch settings.json -- add permissions.allow for detected agents
 echo "Patching settings.json..."
 mkdir -p "$CLAUDE_DIR"
 [ -f "$SETTINGS" ] || echo "{}" > "$SETTINGS"
@@ -175,7 +175,7 @@ if (!hasSummary) {
 }
 
 fs.writeFileSync(process.env.SETTINGS, JSON.stringify(settings, null, 2));
-console.log("  ✓ permissions + hooks patched");
+console.log("  permissions + hooks patched");
 '
 echo ""
 
@@ -183,7 +183,7 @@ echo ""
 echo "Generating CLAUDE.md..."
 [ -f "$CLAUDE_MD" ] && {
   cp "$CLAUDE_MD" "$CLAUDE_MD.conductor-backup"
-  echo "  ✓ backed up existing CLAUDE.md"
+  echo "  backed up existing CLAUDE.md"
 }
 
 DETECTED_JSON="$DETECTED_JSON" TEMPLATE="$SCRIPT_DIR/CLAUDE.md" CLAUDE_MD="$CLAUDE_MD" "$RUNNER" -e '
@@ -204,7 +204,7 @@ const teamLines = agents
     (agent) =>
       "- **" +
       title(agent.name) +
-      "** — " +
+      "** -- " +
       agent.description +
       " Called via `" +
       agent.mcp_name +
@@ -213,7 +213,7 @@ const teamLines = agents
   .join("\n");
 
 const classifierLines = agents
-  .map((agent) => "   - " + (roleMap[agent.role] || agent.role) + " → **" + title(agent.name) + "**")
+  .map((agent) => "   - " + (roleMap[agent.role] || agent.role) + " -> **" + title(agent.name) + "**")
   .join("\n");
 
 const delegationLines = agents
@@ -225,7 +225,7 @@ const delegationLines = agents
       agent.mcp_name +
       "__" +
       agent.name +
-      "`}\n" +
+      "`)\n" +
       "- `prompt`: caveman-compressed request. Include desired output.\n" +
       "- `cwd`: project dir. Pass every time.\n" +
       "- `sandbox`: read-only | workspace-write | danger-full-access\n" +
@@ -247,9 +247,9 @@ const rendered = template
   .replace("{{PERMISSIONS}}", permLines);
 
 fs.writeFileSync(process.env.CLAUDE_MD, rendered);
-console.log("  ✓ CLAUDE.md generated with " + agents.length + " agent(s)");
+console.log("  CLAUDE.md generated with " + agents.length + " agent(s)");
 '
 
 AGENT_SUMMARY="$("$RUNNER" -e 'const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(d.length+" agent(s): "+d.map(a=>a.name).join(", "));' "$DETECTED_JSON")"
 echo ""
-echo "✅ conductor installed with $AGENT_SUMMARY. Restart Claude Code to apply."
+echo "conductor installed with $AGENT_SUMMARY. Restart Claude Code to apply."
