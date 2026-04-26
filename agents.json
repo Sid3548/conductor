@@ -7,7 +7,7 @@
   // - role: code | search | design | general
   // - description: routing/team description text
   // - detect_cmd: CLI binary checked via `command -v` (use this OR detect_path)
-  // - detect_path: absolute file path checked via `test -f` (use this OR detect_cmd)
+  // - detect_path: absolute file path (Windows or Unix style) checked via fs.existsSync
   "agents": [
     {
       "name": "codex",
@@ -29,11 +29,11 @@
     {
       "name": "qwen",
       "mcp_name": "qwen-delegate",
-      "mcp_cmd_note": "requires llama-server running on port 8080 — use run-qwen27b-server.cmd",
+      "mcp_cmd_note": "requires llama-server running on port 8080 -- use run-qwen27b-server.cmd",
       "mcp_cmd": ["node", "~/.claude-router/qwen-mcp/server.mjs"],
       "role": "general",
       "description": "Local offline reasoning. Privacy-sensitive tasks, quick drafts, no internet needed.",
-      "detect_path": "/c/Users/user/AppData/Local/Microsoft/WinGet/Packages/ggml.llamacpp_Microsoft.Winget.Source_8wekyb3d8bbwe/llama-server.exe"
+      "detect_path": "C:/Users/user/AppData/Local/Microsoft/WinGet/Packages/ggml.llamacpp_Microsoft.Winget.Source_8wekyb3d8bbwe/llama-server.exe"
     }
   ]
 }

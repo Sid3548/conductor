@@ -51,10 +51,7 @@ for (const agent of config.agents) {
     } catch {}
   } else if (agent.detect_path) {
     const resolved = agent.detect_path.replace(/^~/, process.env.HOME || "~");
-    try {
-      execSync("test -f \"" + resolved + "\"", { stdio: "ignore", shell: "/bin/bash" });
-      detected = true;
-    } catch {}
+    detected = fs.existsSync(resolved);
   }
 
   if (detected) {
